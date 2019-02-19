@@ -7,12 +7,17 @@ import struct
 import os
 import posixpath
 
-from UnifiedLog import data_format
+from UnifiedLog import dtfabric_parser
+from UnifiedLog import errors
 from UnifiedLog import logger
 
 
-class Uuidtext(data_format.BinaryDataFormat):
+class Uuidtext(dtfabric_parser.DtFabricBaseParser):
     '''Uuidtext file parser.'''
+
+    _DEFINITION_FILE = 'dtfabric.yaml'
+
+    _FILE_SIGNATURE = 0x66778899
 
     def __init__(self, v_file, uuid):
         '''Initializes an uuidtext file parser.
@@ -34,48 +39,39 @@ class Uuidtext(data_format.BinaryDataFormat):
         Args:
           file_object (file): file-like object.
 
-        Returns:
-          bool: True if the uuidtext file-like object was successfully parsed,
-              False otherwise.
-
         Raises:
-          IOError: if the uuidtext file cannot be parsed.
-          OSError: if the uuidtext file cannot be parsed.
-          struct.error: if the uuidtext file cannot be parsed.
+          ParseError: if the uuidtext file cannot be parsed.
         '''
-        file_header_data = file_object.read(16)
-        if file_header_data[0:4] != b'\x99\x88\x77\x66':
-            signature_base16 = binascii.hexlify(file_header_data[0:4])
-            logger.info((
-                'Wrong signature in uuidtext file, got 0x{} instead of '
-                '0x99887766').format(signature_base16))
-            return False
+        file_header_map = self._GetDataTypeMap('uuidtext_file_header')
 
-        # Note that the flag1 and flag2 are not used.
-        flag1, flag2, num_entries = struct.unpack(
-            "<III", file_header_data[4:16])
+        file_header, data_offset = self._ReadStructureFromFileObject(
+            file_object, 0, file_header_map)
 
-        entries_data_size = 8 * num_entries
-        entries_data = file_object.read(entries_data_size)
+        if file_header.signature != self._FILE_SIGNATURE:
+            raise errors.ParseError(
+                'Unsupported signature: 0x{0:04x}.'.format(file_header.signature))
 
-        entry_offset = 0
-        data_offset = 16 + entries_data_size
-        while len(self.entries) < num_entries:
-            entry_end_offset = entry_offset + 8
-            range_start_offset, data_len = struct.unpack(
-                "<II", entries_data[entry_offset:entry_end_offset])
+        format_version = (
+            file_header.major_format_version, file_header.minor_format_version)
+        if format_version != (2, 1):
+            raise errors.ParseError(
+                'Unsupported format version: {0:d}.{1:d}.'.format(
+                    file_header.major_format_version,
+                    file_header.minor_format_version))
 
-            entry_offset = entry_end_offset
+        for entry_descriptor in file_header.entry_descriptors:
+            entry_tuple = (
+                entry_descriptor.offset, data_offset, entry_descriptor.size)
+            self.entries.append(entry_tuple)
+            data_offset += entry_descriptor.size
 
-            self.entries.append([range_start_offset, data_offset, data_len])
-            data_offset += data_len
+        file_footer_map = self._GetDataTypeMap('uuidtext_file_footer')
 
-        file_object.seek(data_offset, os.SEEK_SET)
-        library_path_data = file_object.read(1024)
-        self.library_path = self._ReadCString(library_path_data)
+        file_footer, _ = self._ReadStructureFromFileObject(
+            file_object, data_offset, file_footer_map)
+
+        self.library_path = file_footer.library_path
         self.library_name = posixpath.basename(self.library_path)
-
-        return True
 
     def ReadFmtStringFromVirtualOffset(self, v_offset):
         if not self._file.is_valid:
@@ -90,7 +86,7 @@ class Uuidtext(data_format.BinaryDataFormat):
                 f = self._file.file_pointer
                 f.seek(entry[1] + rel_offset)
                 buffer = f.read(entry[2] - rel_offset)
-                return ReadCString(buffer)
+                return self._ReadCString(buffer)
 
         #Not found
         logger.error('Invalid bounds 0x{:X} for {}'.format(v_offset, str(self.Uuid))) # This is error msg from 'log'
@@ -110,9 +106,10 @@ class Uuidtext(data_format.BinaryDataFormat):
         if not file_object:
           return False
 
+        result = True
         try:
-            result = self._ParseFileObject(file_object)
-        except (IOError, OSError, struct.error):
+            self._ParseFileObject(file_object)
+        except errors.ParseError:
             logger.exception('Uuidtext Parser error')
             result = False
 

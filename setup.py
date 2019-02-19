@@ -50,6 +50,11 @@ setup(
     package_dir={
         'UnifiedLog': 'UnifiedLog'
     },
+    include_package_data=True,
+    package_data={
+        'UnifiedLog': ['*.yaml']
+    },
+    zip_safe=False,
     scripts=glob.glob(os.path.join('scripts', '[A-Za-z]*.py')),
     data_files=[
         ('share/doc/UnifiedLog', [

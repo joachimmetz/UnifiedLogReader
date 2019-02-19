@@ -1,6 +1,7 @@
 include LICENSE.txt README.md requirements.txt
 exclude .gitignore
 exclude *.pyc
+recursive-include UnifiedLog *.yaml
 recursive-exclude UnifiedLog *.pyc
 # The test scripts are not required in a binary distribution package they 
 # are considered source distribution files and excluded in find_package()
